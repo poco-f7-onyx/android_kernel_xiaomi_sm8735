@@ -2,6 +2,7 @@
 #
 # Makefile for misc devices that really don't fit anywhere else.
 #
+ccflags-$(CONFIG_MI_HARDWARE_ID) += -I$(srctree)/drivers/misc/hwid/
 
 obj-$(CONFIG_IBM_ASM)		+= ibmasm/
 obj-$(CONFIG_IBMVMC)		+= ibmvmc.o
@@ -70,3 +71,4 @@ obj-$(CONFIG_TPS6594_PFSM)	+= tps6594-pfsm.o
 obj-$(CONFIG_UID_SYS_STATS)	+= uid_sys_stats.o
 obj-$(CONFIG_QSEECOM_PROXY) 	+= qseecom_proxy.o
 obj-$(CONFIG_PKVM_SMC_FILTER)  += pkvm-smc/
+obj-$(CONFIG_MI_HARDWARE_ID) 	+= hwid/
