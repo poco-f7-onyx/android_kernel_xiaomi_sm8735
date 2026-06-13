@@ -54,6 +54,7 @@
 #include "debug.h"
 #include "xhci.h"
 #include "debug-ipc.h"
+#include <linux/mca/common/mca_sysfs.h>
 
 #define NUM_LOG_PAGES   12
 
@@ -226,6 +227,7 @@
 
 /* USB repeater */
 #define USB_REPEATER_V1		0x1
+#define DWC3_MSM_SYSFS_ATTRS_SIZE ARRAY_SIZE(dwc3_msm_sysfs_field_tbl)
 
 enum dbm_reg {
 	DBM_EP_CFG,
@@ -249,6 +251,10 @@ enum dbm_reg {
 	DBM_DATA_FIFO_MSB,
 	DBM_DATA_FIFO_ADDR_EN,
 	DBM_DATA_FIFO_SIZE_EN,
+};
+
+enum dwc3_msm_attr_list {
+	DWC3_MSM_PROP_SUPER_SPEED,
 };
 
 struct dbm_reg_data {
@@ -599,6 +605,7 @@ struct dwc3_msm {
 	u32			ip;
 	atomic_t                in_p3;
 	atomic_t		in_lpm;
+	atomic_t in_suspend;
 	unsigned int		lpm_to_suspend_delay;
 	struct dev_pm_ops	*dwc3_pm_ops;
 	struct dev_pm_ops	*xhci_pm_ops;
@@ -650,6 +657,7 @@ struct dwc3_msm {
 	bool			has_orientation_gpio;
 
 	bool			wcd_usbss;
+
 	bool			dynamic_disable;
 
 	struct dentry		*dbg_dir;
@@ -684,6 +692,7 @@ struct dwc3_msm {
 
 /* unfortunately, dwc3 core doesn't manage multiple dwc3 instances for trace */
 void *dwc_trace_ipc_log_ctxt;
+static struct dwc3_msm *g_mdwc;
 
 static struct dload_struct __iomem *diag_dload;
 
@@ -3238,10 +3247,10 @@ static void dwc3_msm_update_imem_pid(struct dwc3 *dwc)
 		pr_err("%s: diag_dload mem region not defined\n", __func__);
 		return;
 	}
-
 	cdev = gadget_get_drvdata(dwc->gadget);
 
 	if (cdev->desc.idVendor == 0x05c6 && is_diag_enabled(cdev)) {
+		return;
 		struct usb_gadget_string_container *uc;
 		struct usb_string *s;
 
@@ -4114,6 +4123,7 @@ static int dwc3_msm_check_suspend(struct dwc3_msm *mdwc)
 	if (mdwc->dwc3)
 		dwc = platform_get_drvdata(mdwc->dwc3);
 
+	atomic_set(&mdwc->in_suspend, 1);
 	if (dwc) {
 		if (!mdwc->in_host_mode) {
 			evt = dwc->ev_buf;
@@ -4438,6 +4448,7 @@ static int dwc3_msm_resume(struct dwc3_msm *mdwc)
 	}
 
 	atomic_set(&mdwc->in_lpm, 0);
+	atomic_set(&mdwc->in_suspend, 0);
 
 	/* enable power evt irq for IN P3 detection */
 	enable_irq(mdwc->wakeup_irq[PWR_EVNT_IRQ].irq);
@@ -5098,7 +5109,6 @@ static int dwc3_msm_set_role(struct dwc3_msm *mdwc, enum usb_role role)
 
 	dbg_log_string("cur_role:%s new_role:%s refcnt:%d\n", dwc3_msm_usb_role_string(cur_role),
 				dwc3_msm_usb_role_string(role), mdwc->refcnt_dp_usb);
-
 	/*
 	 * For boot up without USB cable connected case, don't check
 	 * previous role value to allow resetting USB controller and
@@ -5408,14 +5418,26 @@ static ssize_t dynamic_disable_store(struct device *dev, struct device_attribute
 }
 static DEVICE_ATTR_WO(dynamic_disable);
 
+static ssize_t super_speed_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
+	int ret = 0;
+
+	if (!atomic_read(&mdwc->in_suspend))
+		ret = dwc3_msm_is_superspeed(mdwc);
+	else
+		pr_err("%s: dwc3 has been suspend\n", __func__);
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", ret ? "true" : "false");
+}
+static DEVICE_ATTR_RO(super_speed);
+
 static struct attribute *dwc3_msm_attrs[] = {
-	&dev_attr_orientation.attr,
-	&dev_attr_mode.attr,
-	&dev_attr_speed.attr,
-	&dev_attr_bus_vote.attr,
-	&dev_attr_xhci_test.attr,
-	&dev_attr_dynamic_disable.attr,
-	NULL
+	&dev_attr_orientation.attr, &dev_attr_mode.attr,
+	&dev_attr_speed.attr,	    &dev_attr_bus_vote.attr,
+	&dev_attr_xhci_test.attr,   &dev_attr_dynamic_disable.attr,
+	&dev_attr_super_speed.attr, NULL
 };
 ATTRIBUTE_GROUPS(dwc3_msm);
 
@@ -5797,6 +5819,48 @@ static const struct file_operations qos_rec_irq_ops = {
 	.open	= qos_rec_irq_open,
 	.read	= seq_read,
 };
+
+static ssize_t dwc3_msm_sysfs_show(struct device *dev,
+				   struct device_attribute *attr, char *buff);
+
+struct mca_sysfs_attr_info dwc3_msm_sysfs_field_tbl[] = {
+	mca_sysfs_attr_ro(dwc3_msm_sysfs, 0440, DWC3_MSM_PROP_SUPER_SPEED,
+			  super_speed),
+};
+
+static ssize_t dwc3_msm_sysfs_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct mca_sysfs_attr_info *attr_info;
+	int ret = 0;
+	ssize_t count = 0;
+
+	attr_info = mca_sysfs_lookup_attr(attr->attr.name,
+					  dwc3_msm_sysfs_field_tbl,
+					  DWC3_MSM_SYSFS_ATTRS_SIZE);
+	if (!attr_info || !g_mdwc)
+		return -1;
+
+	switch (attr_info->sysfs_attr_name) {
+	case DWC3_MSM_PROP_SUPER_SPEED:
+		if (!atomic_read(&g_mdwc->in_suspend))
+			ret = dwc3_msm_is_superspeed(g_mdwc);
+		else
+			pr_err("%s: dwc3 has been suspend\n", __func__);
+		count = scnprintf(buf, PAGE_SIZE, "%s\n",
+				  ret ? "true" : "false");
+		break;
+	default:
+		break;
+	}
+	return count;
+}
+
+static int dwc3_msm_create_files(void)
+{
+	return mca_sysfs_create_files(SYSFS_DEV_3, dwc3_msm_sysfs_field_tbl,
+				      DWC3_MSM_SYSFS_ATTRS_SIZE);
+}
 
 static void dwc3_msm_debug_init(struct dwc3_msm *mdwc)
 {
@@ -6307,9 +6371,10 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	u32 val;
 
 	mdwc = devm_kzalloc(&pdev->dev, sizeof(*mdwc), GFP_KERNEL);
+
 	if (!mdwc)
 		return -ENOMEM;
-
+	g_mdwc = mdwc;
 	platform_set_drvdata(pdev, mdwc);
 	mdwc->dev = &pdev->dev;
 
@@ -6480,6 +6545,7 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	 */
 	mdwc->lpm_flags = MDWC3_POWER_COLLAPSE | MDWC3_SS_PHY_SUSPEND;
 	atomic_set(&mdwc->in_lpm, 1);
+	atomic_set(&mdwc->in_suspend, 1);
 	pm_runtime_set_autosuspend_delay(mdwc->dev, 1000);
 	pm_runtime_use_autosuspend(mdwc->dev);
 	device_init_wakeup(mdwc->dev, 1);
@@ -6514,7 +6580,8 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	if (ret)
 		goto put_dwc3;
 
-
+	dwc3_msm_create_files();
+	mdwc->force_disconnect = false;
 	/* Add pm_qos with default mode intially */
 	if (mdwc->pm_qos_latency)
 		cpu_latency_qos_add_request(&mdwc->pm_qos_req_dma,
@@ -7006,7 +7073,6 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 			dwc3_msm_write_reg_field(mdwc->base, DWC3_GUCTL3,
 				DWC3_GUCTL3_USB20_RETRY_DISABLE, 1);
 		}
-
 		/*
 		 * USB3 HPG suggests to set DWC3 GUCTL1[10] to 1 if using a non-SNPS
 		 * based, or M31 PHY.  Check for the USB PHY label to determine what
@@ -7022,7 +7088,7 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 		dwc3_msm_override_pm_ops(&dwc->xhci->dev, mdwc->xhci_pm_ops, true);
 		mdwc->in_host_mode = true;
 		pm_runtime_use_autosuspend(&dwc->xhci->dev);
-		pm_runtime_set_autosuspend_delay(&dwc->xhci->dev, 0);
+		pm_runtime_set_autosuspend_delay(&dwc->xhci->dev, 3000);
 		pm_runtime_allow(&dwc->xhci->dev);
 		pm_runtime_mark_last_busy(&dwc->xhci->dev);
 
@@ -7155,9 +7221,9 @@ static void dwc3_override_vbus_status(struct dwc3_msm *mdwc, bool vbus_present)
 static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 {
 	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
-	int timeout = 1000;
-	unsigned long flags;
+	int timeout = 100;
 	int ret;
+	unsigned long flags;
 
 	ret = pm_runtime_resume_and_get(mdwc->dev);
 	if (ret < 0) {
