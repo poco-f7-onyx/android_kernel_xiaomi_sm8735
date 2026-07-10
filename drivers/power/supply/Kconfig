@@ -976,6 +976,13 @@ config CHARGER_QCOM_SMB2
 	  adds support for the SMB2 switch mode battery charger found
 	  in PMI8998 and related PMICs.
 
+config  XM_POWER_SUPPLY
+	tristate "Xiaomi power supply config"
+	help
+	  Say Y or M here to enable xiaomi power supply
+
 source "drivers/power/supply/qcom/Kconfig"
+
+source "drivers/power/supply/mca/Kconfig"
 
 endif # POWER_SUPPLY
