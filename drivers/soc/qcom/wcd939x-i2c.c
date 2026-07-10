@@ -15,6 +15,7 @@
 #include "wcd-usbss-priv.h"
 #include "wcd-usbss-reg-masks.h"
 #include "wcd-usbss-reg-shifts.h"
+#include "../../misc/hwid/hwid.h"
 
 #define WCD_USBSS_I2C_NAME	"wcd-usbss-i2c-driver"
 
@@ -1561,6 +1562,12 @@ static int wcd_usbss_sdam_handle_events_locked(int req_state)
 			/* Enable SBU1/2 2K PLDN */
 			regmap_update_bits(priv->regmap, WCD_USBSS_MG1_BIAS, 0x01, 0x01);
 			regmap_update_bits(priv->regmap, WCD_USBSS_MG2_BIAS, 0x01, 0x01);
+		} else {
+			/* Disable SBU1/2 2K PLDN */
+			regmap_update_bits(priv->regmap, WCD_USBSS_MG1_BIAS,
+					   0x01, 0x00);
+			regmap_update_bits(priv->regmap, WCD_USBSS_MG2_BIAS,
+					   0x01, 0x00);
 		}
 		/* Disconnect D+/D- switch */
 		wcd_usbss_dpdm_switch_update_from_handler(false, false);
@@ -1595,6 +1602,12 @@ static int wcd_usbss_sdam_handle_events_locked(int req_state)
 			/* Disable SBU1/2 2K PLDN */
 			regmap_update_bits(priv->regmap, WCD_USBSS_MG1_BIAS, 0x01, 0x00);
 			regmap_update_bits(priv->regmap, WCD_USBSS_MG2_BIAS, 0x01, 0x00);
+		} else {
+			/* Disable SBU1/2 2K PLDN */
+			regmap_update_bits(priv->regmap, WCD_USBSS_MG1_BIAS,
+					   0x01, 0x01);
+			regmap_update_bits(priv->regmap, WCD_USBSS_MG2_BIAS,
+					   0x01, 0x01);
 		}
 		/* USB Mode : Connect D+/D- switch */
 		wcd_usbss_dpdm_switch_connect(priv, true);
@@ -1614,6 +1627,12 @@ static int wcd_usbss_sdam_handle_events_locked(int req_state)
 			/* Enable SBU1/2 2K PLDN */
 			regmap_update_bits(priv->regmap, WCD_USBSS_MG1_BIAS, 0x01, 0x01);
 			regmap_update_bits(priv->regmap, WCD_USBSS_MG2_BIAS, 0x01, 0x01);
+		} else {
+			/* Disable SBU1/2 2K PLDN */
+			regmap_update_bits(priv->regmap, WCD_USBSS_MG1_BIAS,
+					   0x01, 0x00);
+			regmap_update_bits(priv->regmap, WCD_USBSS_MG2_BIAS,
+					   0x01, 0x00);
 		}
 
 		/* Connect D+/D- switch */
@@ -1730,7 +1749,7 @@ static int wcd_usbss_probe(struct i2c_client *i2c)
 	int rc = 0, i;
 	unsigned int ver = 0;
 	unsigned int efuse_13, efuse_14;
-
+	uint32_t platform_id, hw_country_ver;
 
 	priv = devm_kzalloc(&i2c->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -1794,16 +1813,29 @@ static int wcd_usbss_probe(struct i2c_client *i2c)
 		goto err_data;
 	}
 	if (of_find_property(i2c->dev.of_node, "wcd-usb-sbu-compliance", NULL)) {
-		dev_dbg(priv->dev, "disabling SBU pulldowns for USB compliance\n");
-		priv->usb_sbu_compliance = true;
-		/*
-		 * external zener diode installed,
-		 * disable OVP protections on SBUx. SBUx pull-downs are disabled.
-		 * This is needed for USB compliance requirement (related to
-		 * impedance) on SBUx
-		 */
-		regmap_update_bits(priv->regmap, WCD_USBSS_MG1_BIAS, 0x01, 0x00);
-		regmap_update_bits(priv->regmap, WCD_USBSS_MG2_BIAS, 0x01, 0x00);
+		platform_id = get_hw_version_platform();
+		hw_country_ver = get_hw_country_version();
+		dev_warn(priv->dev, " platform_id:%u, hw_country_ver:%u \n",
+			 platform_id, hw_country_ver);
+		if ((platform_id == HARDWARE_PROJECT_O3 ||
+		     platform_id == HARDWARE_PROJECT_O1) &&
+		    (((uint32_t)CountryGlobal == hw_country_ver) ||
+		     ((uint32_t)CountryIndia == hw_country_ver))) {
+			dev_info(
+				priv->dev,
+				"disabling SBU pulldowns for USB compliance\n");
+			priv->usb_sbu_compliance = true;
+			/*
+			 * external zener diode installed,
+			 * disable OVP protections on SBUx. SBUx pull-downs are disabled.
+			 * This is needed for USB compliance requirement (related to
+			 * impedance) on SBUx
+			 */
+			regmap_update_bits(priv->regmap, WCD_USBSS_MG1_BIAS,
+					   0x01, 0x00);
+			regmap_update_bits(priv->regmap, WCD_USBSS_MG2_BIAS,
+					   0x01, 0x00);
+		}
 	}
 
 	/* OVP-Fuse settings recommended from HW */
