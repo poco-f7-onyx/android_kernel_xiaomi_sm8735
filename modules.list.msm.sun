@@ -37,14 +37,12 @@ qcom_rpmh.ko
 clk-qcom.ko
 qcom_cpu_vendor_hooks.ko
 sched-walt.ko
-sched-walt-debug.ko
 thermal_pause.ko
 cpu_hotplug.ko
 debug-regulator.ko
 proxy-consumer.ko
 rpmh-regulator.ko
 spmi-pmic-arb.ko
-regmap-spmi.ko
 qti-regmap-debugfs.ko
 qcom-spmi-pmic.ko
 nvmem_qcom-spmi-sdam.ko
@@ -69,7 +67,6 @@ tcsrcc-tuna.ko
 sg.ko
 gdsc-regulator.ko
 cqhci.ko
-cqhci-crypto-qti.ko
 sdhci-msm.ko
 smem.ko
 socinfo.ko
@@ -101,12 +98,7 @@ gh_arm_drv.ko
 gh_dbl.ko
 gh_msgq.ko
 gh_rm_drv.ko
-gunyah.ko
-gunyah-msgq.ko
-gunyah_hypercall.ko
 gunyah_loader.ko
-gunyah_platform_hooks.ko
-gunyah_qcom.ko
 mdt_loader.ko
 cambistmclkcc-sun.ko
 cambistmclkcc-tuna.ko
